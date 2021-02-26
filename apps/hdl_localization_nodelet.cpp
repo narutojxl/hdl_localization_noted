@@ -373,7 +373,8 @@ private:
 
     //如果laser的回调函数正在执行, 该服务就得等到laser callback执行完毕才执行
     //1: 如果初值决定要手动由rosservice  call  /relocalize 给, 该服务回调函数基本上执行不上, 
-    //     导致pose_estimator一直为nullptr, 也会导致laser 回调函数一直"waiting for initial pose input!!"  //TODO(jxl): 是个bug
+    //     导致pose_estimator一直为nullptr, 也会导致laser 回调函数一直"waiting for initial pose input!!"  
+    //TODO(jxl): 是个bug, we fixed it, https://github.com/koide3/hdl_localization/issues/68
     //2: 如果初值还是由/initialpose" 给定,  发现定位丢失后(匹配的error大于一定值, or ukf 输出的covariance大于一定阈值), 
     //用rosservice  call  /relocalize 来reset ukf estimator.
 

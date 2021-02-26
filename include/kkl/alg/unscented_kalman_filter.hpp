@@ -33,6 +33,9 @@ public:
    * @param mean                 initial mean
    * @param cov                  initial covariance
    */
+
+  // PoseSystem: 16<P V Q Ba Bg>, 6<acc, gyro>, 7<P, Q>
+  // state_dim   input_dim   measurement_dim
   UnscentedKalmanFilterX(const System& system, int state_dim, int input_dim, int measurement_dim, const MatrixXt& process_noise, const MatrixXt& measurement_noise, const VectorXt& mean, const MatrixXt& cov)
     : state_dim(state_dim),
     input_dim(input_dim),
@@ -40,7 +43,7 @@ public:
     N(state_dim),
     M(input_dim),
     K(measurement_dim),
-    S(2 * state_dim + 1),
+    S(2 * state_dim + 1), //sigma points number
     mean(mean),
     cov(cov),
     system(system),
@@ -49,10 +52,12 @@ public:
     lambda(1),
     normal_dist(0.0, 1.0)
   {
-    weights.resize(S, 1);
+    weights.resize(S, 1); //TODO(jxl): 每个sigma points只有一个权重w_m, 没有w_c(用来计算covariance)
     sigma_points.resize(S, N);
+
     ext_weights.resize(2 * (N + K) + 1, 1);
     ext_sigma_points.resize(2 * (N + K) + 1, N + K);
+
     expected_measurements.resize(2 * (N + K) + 1, K);
 
     // initialize weights for unscented filter
@@ -72,12 +77,12 @@ public:
    * @brief predict
    * @param control  input vector
    */
-  void predict() {
+  void predict() { //没有imu数据时，用常量速度模型把从estimator状态从上一帧时刻预测到当前帧时刻
     // calculate sigma points
     ensurePositiveFinite(cov);
     computeSigmaPoints(mean, cov, sigma_points);
     for (int i = 0; i < S; i++) {
-      sigma_points.row(i) = system.f(sigma_points.row(i));
+      sigma_points.row(i) = system.f(sigma_points.row(i)); //《probabilistic robotics》 Table 3.4 line 3.
     }
 
     const auto& R = process_noise;
@@ -89,13 +94,13 @@ public:
     mean_pred.setZero();
     cov_pred.setZero();
     for (int i = 0; i < S; i++) {
-      mean_pred += weights[i] * sigma_points.row(i);
+      mean_pred += weights[i] * sigma_points.row(i).transpose(); //TODO(jxl): transpose(), line 4.
     }
     for (int i = 0; i < S; i++) {
       VectorXt diff = sigma_points.row(i).transpose() - mean_pred;
-      cov_pred += weights[i] * diff * diff.transpose();
+      cov_pred += weights[i] * diff * diff.transpose(); //line 5.
     }
-    cov_pred += R;
+    cov_pred += R; 
 
     mean = mean_pred;
     cov = cov_pred;
@@ -105,7 +110,7 @@ public:
    * @brief predict
    * @param control  input vector
    */
-  void predict(const VectorXt& control) {
+  void predict(const VectorXt& control) {//上一帧laser到当前帧laser之间的所有imu meas, 每来一次imu mea，把estimator的状态做一次predict
     // calculate sigma points
     ensurePositiveFinite(cov);
     computeSigmaPoints(mean, cov, sigma_points);
@@ -122,7 +127,7 @@ public:
     mean_pred.setZero();
     cov_pred.setZero();
     for (int i = 0; i < S; i++) {
-      mean_pred += weights[i] * sigma_points.row(i);
+      mean_pred += weights[i] * sigma_points.row(i).transpose(); //TODO(jxl): transpose()
     }
     for (int i = 0; i < S; i++) {
       VectorXt diff = sigma_points.row(i).transpose() - mean_pred;
@@ -138,49 +143,51 @@ public:
    * @brief correct
    * @param measurement  measurement vector
    */
-  void correct(const VectorXt& measurement) {
+  void correct(const VectorXt& measurement) {//ndt在k时刻预测值的基础上计算出来k时刻的状态
+
     // create extended state space which includes error variances
     VectorXt ext_mean_pred = VectorXt::Zero(N + K, 1);
     MatrixXt ext_cov_pred = MatrixXt::Zero(N + K, N + K);
-    ext_mean_pred.topLeftCorner(N, 1) = VectorXt(mean);
-    ext_cov_pred.topLeftCorner(N, N) = MatrixXt(cov);
+    ext_mean_pred.topLeftCorner(N, 1) = VectorXt(mean); //mean: 预测k时刻状态的均值
+    ext_cov_pred.topLeftCorner(N, N) = MatrixXt(cov); //cov: 预测k时刻状态的cov
     ext_cov_pred.bottomRightCorner(K, K) = measurement_noise;
 
     ensurePositiveFinite(ext_cov_pred);
-    computeSigmaPoints(ext_mean_pred, ext_cov_pred, ext_sigma_points);
+    computeSigmaPoints(ext_mean_pred, ext_cov_pred, ext_sigma_points); //line 6. 预测出来k时刻状态的sigma points
 
     // unscented transform
     expected_measurements.setZero();
     for (int i = 0; i < ext_sigma_points.rows(); i++) {
-      expected_measurements.row(i) = system.h(ext_sigma_points.row(i).transpose().topLeftCorner(N, 1));
+      expected_measurements.row(i) = system.h(ext_sigma_points.row(i).transpose().topLeftCorner(N, 1)); 
+      //line 7. 用预测出来k时刻sigma points代到测量方程，得到k时刻预测的测量值(sigma points表示）
       expected_measurements.row(i) += VectorXt(ext_sigma_points.row(i).transpose().bottomRightCorner(K, 1));
     }
 
     VectorXt expected_measurement_mean = VectorXt::Zero(K);
     for (int i = 0; i < ext_sigma_points.rows(); i++) {
-      expected_measurement_mean += ext_weights[i] * expected_measurements.row(i);
+      expected_measurement_mean += ext_weights[i] * expected_measurements.row(i); //line 8. 从sigma points中提取出k时刻预测的测量值的均值和方差
     }
     MatrixXt expected_measurement_cov = MatrixXt::Zero(K, K);
     for (int i = 0; i < ext_sigma_points.rows(); i++) {
       VectorXt diff = expected_measurements.row(i).transpose() - expected_measurement_mean;
-      expected_measurement_cov += ext_weights[i] * diff * diff.transpose();
+      expected_measurement_cov += ext_weights[i] * diff * diff.transpose(); //line 9.
     }
 
     // calculated transformed covariance
     MatrixXt sigma = MatrixXt::Zero(N + K, K);
     for (int i = 0; i < ext_sigma_points.rows(); i++) {
-      auto diffA = (ext_sigma_points.row(i).transpose() - ext_mean_pred);
-      auto diffB = (expected_measurements.row(i).transpose() - expected_measurement_mean);
-      sigma += ext_weights[i] * (diffA * diffB.transpose());
+      auto diffA = (ext_sigma_points.row(i).transpose() - ext_mean_pred); //预测出来k时刻状态的均值 和 预测出来k时刻状态的sigma points 之间的差异
+      auto diffB = (expected_measurements.row(i).transpose() - expected_measurement_mean); //预测出来k时刻测量值的均值 和 预测出来k时刻测量值的sigma points之间的差异
+      sigma += ext_weights[i] * (diffA * diffB.transpose()); //line 10.
     }
 
-    kalman_gain = sigma * expected_measurement_cov.inverse();
+    kalman_gain = sigma * expected_measurement_cov.inverse(); //line 11.
     const auto& K = kalman_gain;
 
-    VectorXt ext_mean = ext_mean_pred + K * (measurement - expected_measurement_mean);
-    MatrixXt ext_cov = ext_cov_pred - K * expected_measurement_cov * K.transpose();
+    VectorXt ext_mean = ext_mean_pred + K * (measurement - expected_measurement_mean); //line 12.
+    MatrixXt ext_cov = ext_cov_pred - K * expected_measurement_cov * K.transpose(); //line 13.
 
-    mean = ext_mean.topLeftCorner(N, 1);
+    mean = ext_mean.topLeftCorner(N, 1); //最终k时刻laser在map下的位姿是由 line 12. 决定
     cov = ext_cov.topLeftCorner(N, N);
   }
 

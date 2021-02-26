@@ -15,14 +15,18 @@ namespace hdl_localization {
  * @param quat                initial orientation
  * @param cool_time_duration  during "cool time", prediction is not performed
  */
-PoseEstimator::PoseEstimator(pcl::Registration<PointT, PointT>::Ptr& registration, const ros::Time& stamp, const Eigen::Vector3f& pos, const Eigen::Quaternionf& quat, double cool_time_duration)
+PoseEstimator::PoseEstimator(pcl::Registration<PointT, PointT>::Ptr& registration, 
+                            const ros::Time& stamp, 
+                            const Eigen::Vector3f& pos, 
+                            const Eigen::Quaternionf& quat, 
+                            double cool_time_duration)
     : init_stamp(stamp), registration(registration), cool_time_duration(cool_time_duration) {
   last_observation = Eigen::Matrix4f::Identity();
   last_observation.block<3, 3>(0, 0) = quat.toRotationMatrix();
   last_observation.block<3, 1>(0, 3) = pos;
 
   process_noise = Eigen::MatrixXf::Identity(16, 16);
-  process_noise.middleRows(0, 3) *= 1.0;
+  process_noise.middleRows(0, 3) *= 1.0;  //P.middleRows(i, rows):  P(i: i+rows-1,  : )
   process_noise.middleRows(3, 3) *= 1.0;
   process_noise.middleRows(6, 4) *= 0.5;
   process_noise.middleRows(10, 3) *= 1e-6;
@@ -33,11 +37,11 @@ PoseEstimator::PoseEstimator(pcl::Registration<PointT, PointT>::Ptr& registratio
   measurement_noise.middleRows(3, 4) *= 0.001;
 
   Eigen::VectorXf mean(16);
-  mean.middleRows(0, 3) = pos;
-  mean.middleRows(3, 3).setZero();
-  mean.middleRows(6, 4) = Eigen::Vector4f(quat.w(), quat.x(), quat.y(), quat.z());
-  mean.middleRows(10, 3).setZero();
-  mean.middleRows(13, 3).setZero();
+  mean.middleRows(0, 3) = pos;  //P
+  mean.middleRows(3, 3).setZero(); //V
+  mean.middleRows(6, 4) = Eigen::Vector4f(quat.w(), quat.x(), quat.y(), quat.z()); //Q
+  mean.middleRows(10, 3).setZero(); //ba
+  mean.middleRows(13, 3).setZero(); //bg
 
   Eigen::MatrixXf cov = Eigen::MatrixXf::Identity(16, 16) * 0.01;
 
@@ -96,7 +100,7 @@ void PoseEstimator::predict(const ros::Time& stamp, const Eigen::Vector3f& acc, 
 /**
  * @brief update the state of the odomety-based pose estimation
  */
-void PoseEstimator::predict_odom(const Eigen::Matrix4f& odom_delta) {
+void PoseEstimator::predict_odom(const Eigen::Matrix4f& odom_delta) {//laser k-1时刻到 laser k时刻的delta变换
   if(!odom_ukf) {
     Eigen::MatrixXf odom_process_noise = Eigen::MatrixXf::Identity(7, 7);
     Eigen::MatrixXf odom_measurement_noise = Eigen::MatrixXf::Identity(7, 7) * 1e-3;
@@ -104,6 +108,8 @@ void PoseEstimator::predict_odom(const Eigen::Matrix4f& odom_delta) {
     Eigen::VectorXf odom_mean(7);
     odom_mean.block<3, 1>(0, 0) = Eigen::Vector3f(ukf->mean[0], ukf->mean[1], ukf->mean[2]);
     odom_mean.block<4, 1>(3, 0) = Eigen::Vector4f(ukf->mean[6], ukf->mean[7], ukf->mean[8], ukf->mean[9]);
+    //此时ukf的mean是已经用常量速度模型或者imu meas预测出来当前帧时刻, 即k状态的均值
+
     Eigen::MatrixXf odom_cov = Eigen::MatrixXf::Identity(7, 7) * 1e-2;
 
     OdomSystem odom_system;
@@ -125,7 +131,7 @@ void PoseEstimator::predict_odom(const Eigen::Matrix4f& odom_delta) {
   process_noise.bottomRightCorner(4, 4) = Eigen::Matrix4f::Identity() * (1 - std::abs(quat.w())) + Eigen::Matrix4f::Identity() * 1e-3;
 
   odom_ukf->setProcessNoiseCov(process_noise);
-  odom_ukf->predict(control);
+  odom_ukf->predict(control); //laser k-1时刻到 laser k时刻的delta变换
 }
 
 /**
@@ -134,15 +140,15 @@ void PoseEstimator::predict_odom(const Eigen::Matrix4f& odom_delta) {
  * @return cloud aligned to the globalmap
  */
 pcl::PointCloud<PoseEstimator::PointT>::Ptr PoseEstimator::correct(const ros::Time& stamp, const pcl::PointCloud<PointT>::ConstPtr& cloud) {
-  last_correction_stamp = stamp;
+  last_correction_stamp = stamp; //每来一帧laser, correct time就更新一次
 
-  Eigen::Matrix4f no_guess = last_observation;
+  Eigen::Matrix4f no_guess = last_observation; //ndt计算出来的上一时刻的结果
   Eigen::Matrix4f imu_guess;
   Eigen::Matrix4f odom_guess;
   Eigen::Matrix4f init_guess = Eigen::Matrix4f::Identity();
 
   if(!odom_ukf) {
-    init_guess = imu_guess = matrix();
+    init_guess = imu_guess = matrix(); //k时刻状态的预测值
   } else {
     imu_guess = matrix();
     odom_guess = odom_matrix();
@@ -174,9 +180,12 @@ pcl::PointCloud<PoseEstimator::PointT>::Ptr PoseEstimator::correct(const ros::Ti
     init_guess.block<3, 3>(0, 0) = Eigen::Quaternionf(fused_mean[3], fused_mean[4], fused_mean[5], fused_mean[6]).normalized().toRotationMatrix();
   }
 
+  clock_t start = clock();
   pcl::PointCloud<PointT>::Ptr aligned(new pcl::PointCloud<PointT>());
-  registration->setInputSource(cloud);
-  registration->align(*aligned, init_guess);
+  registration->setInputSource(cloud); //ndt对象, target点云在hdl中已经设置为global map
+  registration->align(*aligned, init_guess); //k时刻状态的预测值为初值，进行ndt匹配
+  clock_t end = clock();
+  ROS_WARN("ndt registration use_time = %f  ms", double(end-start)/CLOCKS_PER_SEC*1000); 
 
   Eigen::Matrix4f trans = registration->getFinalTransformation();
   Eigen::Vector3f p = trans.block<3, 1>(0, 3);
@@ -192,9 +201,11 @@ pcl::PointCloud<PoseEstimator::PointT>::Ptr PoseEstimator::correct(const ros::Ti
   last_observation = trans;
 
   wo_pred_error = no_guess.inverse() * registration->getFinalTransformation();
+  //ndt计算的k-1时刻帧到k时刻帧的delta变换
 
   ukf->correct(observation);
   imu_pred_error = imu_guess.inverse() * registration->getFinalTransformation();
+  //k时刻预测值到k时刻ndt计算结果的delta
 
   if(odom_ukf) {
     if (observation.tail<4>().dot(odom_ukf->mean.tail<4>()) < 0.0) {

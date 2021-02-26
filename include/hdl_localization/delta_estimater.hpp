@@ -47,7 +47,7 @@ public:
 
 private:
   mutable std::mutex mutex;
-  Eigen::Isometry3f delta;
+  Eigen::Isometry3f delta; 
   pcl::Registration<PointT, PointT>::Ptr reg;
 
   pcl::PointCloud<PointT>::ConstPtr last_frame;

@@ -9,6 +9,8 @@
 #include <pcl/point_cloud.h>
 #include <pcl/registration/registration.h>
 
+#include <time.h>
+
 namespace kkl {
   namespace alg {
 template<typename T, class System> class UnscentedKalmanFilterX;
@@ -84,7 +86,7 @@ private:
   ros::Time init_stamp;             // when the estimator was initialized
   ros::Time prev_stamp;             // when the estimator was updated last time
   ros::Time last_correction_stamp;  // when the estimator performed the correction step
-  double cool_time_duration;        //
+  double cool_time_duration;        //从init时刻开始算起，过了这段冷却时间后，estimator才开始用imu数据或者常量模型做predict
 
   Eigen::MatrixXf process_noise;
   std::unique_ptr<kkl::alg::UnscentedKalmanFilterX<float, PoseSystem>> ukf;

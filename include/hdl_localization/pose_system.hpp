@@ -34,10 +34,10 @@ public:
     Vector3t gyro_bias = state.middleRows(13, 3);
 
     // position
-    next_state.middleRows(0, 3) = pt + vt * dt;  //
+    next_state.middleRows(0, 3) = pt + vt * dt; 
 
     // velocity
-    next_state.middleRows(3, 3) = vt;
+    next_state.middleRows(3, 3) = vt; //没有输入的常量速度模型，除了P更新外，V Q Ba Bg保持不变
 
     // orientation
     Quaterniont qt_ = qt;
@@ -65,13 +65,14 @@ public:
     Vector3t raw_gyro = control.middleRows(3, 3);
 
     // position
-    next_state.middleRows(0, 3) = pt + vt * dt;  //
+    Vector3t g(0.0f, 0.0f, 9.80665f);
+    next_state.middleRows(0, 3) = pt + vt * dt + 0.5*(qt*(raw_acc - acc_bias) -g)*dt*dt; 
+    //TODO(jxl): 作者没有加0.5*(qt*(raw_acc - acc_bias) -g)*dt*dt
 
     // velocity
-    Vector3t g(0.0f, 0.0f, 9.80665f);
     Vector3t acc_ = raw_acc - acc_bias;
     Vector3t acc = qt * acc_;
-    next_state.middleRows(3, 3) = vt + (acc - g) * dt;
+    next_state.middleRows(3, 3) = vt + (acc - g) * dt; //TODO(jxl): 作者默认使用的是ENU型imu
     // next_state.middleRows(3, 3) = vt; // + (acc - g) * dt;		// acceleration didn't contribute to accuracy due to large noise
 
     // orientation
@@ -90,8 +91,8 @@ public:
   // observation equation
   VectorXt h(const VectorXt& state) const {
     VectorXt observation(7);
-    observation.middleRows(0, 3) = state.middleRows(0, 3);
-    observation.middleRows(3, 4) = state.middleRows(6, 4).normalized();
+    observation.middleRows(0, 3) = state.middleRows(0, 3); //P
+    observation.middleRows(3, 4) = state.middleRows(6, 4).normalized(); //Q
 
     return observation;
   }

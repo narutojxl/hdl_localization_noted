@@ -9,10 +9,10 @@
   
   <!-- input clouds are transformed in odom_child_frame, and then localization is performed in that frame -->
   <!-- this is useful to match the LIDAR and IMU coodinate systems -->
-  <arg name="odom_child_frame_id" default="velodyne" />
+  <arg name="odom_child_frame_id" default="velodyne" /> <!---topic "velodyne_points" 's  frame_id -->
 
   <!-- optional arguments -->
-  <arg name="use_imu" default="false" />
+  <arg name="use_imu" default="true" />
   <arg name="invert_imu_acc" default="false" />
   <arg name="invert_imu_gyro" default="false" />
   <arg name="use_global_localization" default="true" />
@@ -29,9 +29,9 @@
     <!-- globalmap_server_nodelet -->
     <!-- 把pcd文件加载进来, 降采样发布出去, "/globalmap"-->
     <node pkg="nodelet" type="nodelet" name="globalmap_server_nodelet" args="load hdl_localization/GlobalmapServerNodelet $(arg nodelet_manager)">
-      <param name="globalmap_pcd" value="$(find hdl_localization)/data/map.pcd" />
+      <param name="globalmap_pcd" value="$(find hdl_localization)/data/finalCloud_lego_loam_zhiyuan.pcd" />    <!-- map.pcd-->
       <param name="convert_utm_to_local" value="false" />
-      <param name="downsample_resolution" value="0. 1" />
+      <param name="downsample_resolution" value="0.05" /> <!--default: 0.1-->
     </node>
 
 
@@ -67,7 +67,7 @@
       <param name="ndt_neighbor_search_method" value="DIRECT7" />  
       <param name="ndt_neighbor_search_radius" value="2.0" />
       <param name="ndt_resolution" value="1.0" />
-      <param name="downsample_resolution" value="0.1" />
+      <param name="downsample_resolution" value="0.1" />  <!--default: 0.1-->
 
       <!-- if "specify_init_pose" is true, pose estimator will be initialized with the following params -->
       <!-- otherwise, you need to input an initial pose with "2D Pose Estimate" on rviz" -->
